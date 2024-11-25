@@ -1,0 +1,23 @@
+This is one of my PhD projects where I use data from the Bank of Italy to investigate the relationship between the distribution of house ownership in the Italian context and how house property enters income evaluation (ISEE). The analysis aims to identify the effect of the house ownership on the accessibility of higher education, exploiting exogenous variation around the ISEE threshold of the no-tax area for university among different categories of house owners. 
+
+The project is structured as follows: 
+
+- DATA  
+  - raw: data as downloaded from source.txt
+  - tmp: data as cleaned for analysis (also in temporary intermediate versions)
+  - final : data as should be used to run final analysis 
+
+- CODE
+  - clean: contains one file for each dataset that needs to be cleaned
+  - combine: contains one file for each merge/join/append in the process
+  - analyse : contains code to reproduce graphs and figures from the exploratory analysis 
+  - regress: contains main rdd analysis and code for reg tables
+  - robust: contains code for robustness checks
+  - appendix: contains code for additional appendix tables
+  - report : code for presentation and latex file 
+
+
+- DOCUMENTATION 
+   - source file : source.txt file reporting url of websites and dates of retrival
+   - README
+   - run.me.Rmd file to run all project 
