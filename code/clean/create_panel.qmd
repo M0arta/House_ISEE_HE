@@ -1,0 +1,251 @@
+---
+title: "create panel"
+format: html
+editor: visual
+---
+
+```{r}
+
+library(pacman)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  cowplot,
+  xtable,
+  renv,
+  weights,
+  gridExtra,
+  readxl,
+  ggplot2,
+  ipumsr,
+  dplyr,
+  data.table,
+  sf,
+  raster,
+  RSQLite,
+  lfe,
+  car,
+  countrycode,
+  patchwork,
+  fastDummies,
+  stargazer,
+  sandwich,
+  lmtest,
+  haven,
+  ggthemes,
+  RColorBrewer,
+  purrr,
+  viridis,
+  tidyr,
+  data.table,
+  here,
+  plm,
+  spdep,
+  robust,
+  lfe, 
+  doParallel,
+  foreach,
+  pryr,
+  fixest,
+  broom,
+  multiwayvcov
+)
+
+here::i_am("code/clean/create_panel.qmd")
+
+```
+
+Using Bank of Italy survey data open samples for all available years from :
+
+https://www.bancaditalia.it/statistiche/tematiche/indagini-famiglie-imprese/bilanci-famiglie/distribuzione-microdati/index.html?page=1
+
+(storico_stata file , updated 10/01/2025)
+
+\-\-- \> Storico does not have UNIVER question so go back to using year by year samples : 2010-2012-2014-2016-2020 (5 waves)
+
+-   here opening storico and realizing no vars
+
+```{r}
+
+## unzip
+
+zip_path <- here("data", "raw", "storico_stata.zip")
+
+utils::unzip(zip_path, list = TRUE)
+out_dir <- here("data", "raw", "storico_stata_unzipped")
+if (!dir.exists(out_dir)) dir.create(out_dir)
+
+utils::unzip(zip_path, exdir = out_dir)
+
+list.dirs(out_dir, full.names = TRUE, recursive = FALSE)
+list.files(out_dir, recursive = TRUE)
+
+
+## open files in env
+
+stata_dir <- here("data", "raw", "storico_stata_unzipped", "STATA")
+
+dta_files <- list.files(stata_dir, pattern = "\\.dta$", full.names = TRUE)
+
+
+data_list <- lapply(dta_files, read_dta)
+names(data_list) <- tools::file_path_sans_ext(basename(dta_files))
+
+list2env(data_list, envir = .GlobalEnv)
+
+ls()
+
+```
+
+-   open year by year
+
+    ```{r}
+
+
+    Git reset—hard 2f5fca21a4db6a32f954495c4a082cc8082e5c8e 
+
+
+    years <- c("2010", "2012", "2014", "2016", "2020")
+
+
+    data_list <- list()
+
+
+    for (yr in years) {
+
+      dir_path <- here("data", "raw", yr)
+      
+      files <- list.files(dir_path, pattern = "\\.dta$", full.names = TRUE)
+
+      for (f in files) {
+        obj_name <- paste0(yr, "_", tools::file_path_sans_ext(basename(f)))
+        data_list[[obj_name]] <- read_dta(f)
+      }
+    }
+
+
+    list2env(data_list, envir = .GlobalEnv)
+
+
+    ls(pattern = "^(2010|2012|2014|2016|2020)_")
+
+
+
+    ```
+
+-   Isolate panel component merging components infos
+
+    ```{r}
+
+
+
+    years <- c("2010","2012","2014","2016","2020")
+    base_mods <- c("carcom","ricfam","rfam")
+
+    panel_long <- map_df(years, function(yr) {
+      yr2 <- substr(yr, 3, 4)
+      mods <- c(paste0(base_mods, yr2), paste0("q", yr2, "a"), paste0("q", yr2, "d"), "alld1", "alld2_res")
+      dir  <- here("data","raw",yr)
+      files <- list.files(dir, "\\.dta$", full.names = TRUE)
+      keep <- tools::file_path_sans_ext(basename(files)) %in% mods
+      files <- files[keep]
+      dfs <- map(files, read_dta)
+      names(dfs) <- tools::file_path_sans_ext(basename(files))
+      car <- dfs[grep(paste0("^carcom",yr2,"$"), names(dfs))]
+      oth <- dfs[names(dfs) != paste0("carcom",yr2)]
+      df_year <- reduce(car, full_join, by = c("nquest","nordp"))
+      df_year <- reduce(oth, full_join, by = "nquest", .init = df_year)
+      df_year %>% mutate(year = as.integer(yr))
+    })
+
+
+
+
+
+
+
+    ```
+
+## Clean samples
+
+```{r}
+
+
+## info house
+
+case_16 <- q16d %>%
+  dplyr::select(nquest, anabit, anposs, ancostr, godabit, valabit,poss, altrab, altrfab, teragr, ternagr, debita1, ndebita1, debita2, ndebita2, mutuor)
+
+
+## info household level
+
+hhs <- comp %>%
+  dplyr::select(nquest, nord, ncomp, sesso, anasc, staciv, studio, annoedu, pesofit, tipodip, nascarea, univer, parent, ireg, nascreg, area5, acom5, perl, nperl, eta, isco)
+
+income <- rfam %>%
+  dplyr::select(y, yl,ym, yt,yc, nquest)
+
+wealth  <- ricfam %>%
+  dplyr::select(w, ar1, ar, af,pf, clw,clw2, bd, nquest)%>%
+  mutate(
+    fin_assets = ar,
+    debts = bd
+  ) 
+
+
+# Merge datasets
+
+fam_16 <- hhs_16 %>%
+  left_join(wealth_16, by = "nquest") %>%
+  left_join(income_16, by = c("nquest")) %>%
+  left_join(case_16, by = "nquest")
+
+
+
+########################################################################
+
+```
+
+Compute variables for analysis
+
+-   ISEE proxy
+
+```{r}
+
+```
+
+-   University attendance at hh level
+
+    ```{r}
+
+    ```
+
+-   House ownership
+
+    ```{r}
+
+    ```
+
+-   ISEE without house ownership
+
+    ```{r}
+
+    ```
+
+-   Other controls useful for matching
+
+    ```{r}
+
+
+
+
+
+
+    ```
+
+## Save panel as a tmp
+
+```{r}
+
+```
