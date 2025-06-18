@@ -14,6 +14,7 @@ pacman::p_load(
   cowplot,
   xtable,
   renv,
+  mice,
   weights,
   gridExtra,
   readxl,
@@ -56,49 +57,7 @@ here::i_am("code/clean/create_panel.qmd")
 
 ```
 
-Using Bank of Italy survey data open samples for all available years from :
-
-https://www.bancaditalia.it/statistiche/tematiche/indagini-famiglie-imprese/bilanci-famiglie/distribuzione-microdati/index.html?page=1
-
-(storico_stata file , updated 10/01/2025)
-
-\-\-- \> Storico does not have UNIVER question so go back to using year by year samples : 2010-2012-2014-2016-2020 (5 waves)
-
--   here opening storico and realizing no vars
-
-```{r}
-
-## unzip
-
-zip_path <- here("data", "raw", "storico_stata.zip")
-
-utils::unzip(zip_path, list = TRUE)
-out_dir <- here("data", "raw", "storico_stata_unzipped")
-if (!dir.exists(out_dir)) dir.create(out_dir)
-
-utils::unzip(zip_path, exdir = out_dir)
-
-list.dirs(out_dir, full.names = TRUE, recursive = FALSE)
-list.files(out_dir, recursive = TRUE)
-
-
-## open files in env
-
-stata_dir <- here("data", "raw", "storico_stata_unzipped", "STATA")
-
-dta_files <- list.files(stata_dir, pattern = "\\.dta$", full.names = TRUE)
-
-
-data_list <- lapply(dta_files, read_dta)
-names(data_list) <- tools::file_path_sans_ext(basename(dta_files))
-
-list2env(data_list, envir = .GlobalEnv)
-
-ls()
-
-```
-
--   open year by year
+-   open year by year 2010-2020 Bank of Italy survey
 
     ```{r}
 
@@ -138,8 +97,6 @@ ls()
 
     ```{r}
 
-
-
     years <- c("2010","2012","2014","2016","2020")
     base_mods <- c("carcom","ricfam","rfam")
 
@@ -159,59 +116,129 @@ ls()
       df_year %>% mutate(year = as.integer(yr))
     })
 
-
-
-
-
-
-
     ```
 
-## Clean samples
+## Clean panel
 
 ```{r}
 
 
-## info house
+## select vars
 
-case_16 <- q16d %>%
-  dplyr::select(nquest, anabit, anposs, ancostr, godabit, valabit,poss, altrab, altrfab, teragr, ternagr, debita1, ndebita1, debita2, ndebita2, mutuor)
-
-
-## info household level
-
-hhs <- comp %>%
-  dplyr::select(nquest, nord, ncomp, sesso, anasc, staciv, studio, annoedu, pesofit, tipodip, nascarea, univer, parent, ireg, nascreg, area5, acom5, perl, nperl, eta, isco)
-
-income <- rfam %>%
-  dplyr::select(y, yl,ym, yt,yc, nquest)
-
-wealth  <- ricfam %>%
-  dplyr::select(w, ar1, ar, af,pf, clw,clw2, bd, nquest)%>%
-  mutate(
-    fin_assets = ar,
-    debts = bd
-  ) 
+panel_vars <- panel_long %>%
+  dplyr::select( anabit, anposs.x, ancostr.x, godabit, valabit.x,poss.x, altrab, altrfab, teragr, ternagr, debita1, ndebita1, debita2, ndebita2, mutuor, nquest, nordp, ncomp, sex, anasc, staciv, studio, annoedu, pesofit, tipodip, nascarea, univer, parent, ireg, nascreg, area5, acom5, perl, nperl, eta, isco, y, yl,ym, yt,yc,w, ar1, ar, af,pf, clw,clw2, bd, quopro.x, ritardo,stupcf, stumcf, year)
 
 
-# Merge datasets
+## look at missings
 
-fam_16 <- hhs_16 %>%
-  left_join(wealth_16, by = "nquest") %>%
-  left_join(income_16, by = c("nquest")) %>%
-  left_join(case_16, by = "nquest")
+
+missing_summary <- panel_vars %>%
+  summarise(across(everything(),
+                   list(missing_count  = ~ sum(is.na(.)),
+                        missing_pct    = ~ mean(is.na(.)) * 100),
+                   .names = "{.col}_{.fn}")) %>%
+  pivot_longer(everything(),
+               names_to  = c("variable", ".value"),
+               names_sep = "_")
+
+missing_summary
+
+#mice::md.pattern(panel_vars)
 
 
 
-########################################################################
+# clean /rename 
+
+
+panel_vars <- panel_vars %>%
+mutate(
+valabit = if_else(is.na(valabit.x), 0, valabit.x),
+    fin_assets = if_else(is.na(ar), 0, ar),
+    debts = if_else(is.na(bd), 0, bd),
+    houseown1 = if_else(godabit == 1, 1,0),
+    houseown2 = if_else(altrab ==1, 1,0) 
+)
 
 ```
-
-Compute variables for analysis
 
 -   ISEE proxy
 
 ```{r}
+
+
+isee_panel <- panel_vars %>%
+  # 1) flag minors/adults (still at the individual‐wave level)
+  mutate(
+    is_minor = if_else(eta < 18, 1L, 0L),
+    is_adult = if_else(eta >= 18, 1L, 0L),
+    dis_flag = 0L
+  ) %>%
+  # 2) aggregate up to household × year
+  group_by(nquest, year) %>%    # <-- add your panel time indicator here
+  summarise(
+    # counts in the household in that wave
+    n_adults      = sum(is_adult,   na.rm = TRUE),
+    n_minors      = sum(is_minor,   na.rm = TRUE),
+    n_disabling   = sum(dis_flag,   na.rm = TRUE),
+
+    # household characteristics (assumed constant within hh×year)
+    ncomp         = first(ncomp),       # household size
+    hh_income_net = first(y),           # net disposable income
+    ar1           = first(ar1),         # total housing
+    af            = first(af),          # financial assets
+    pf            = first(pf),          # financial liabilities
+    valabit       = first(valabit.x)    # value of primary dwelling
+  ) %>%
+  ungroup() %>%
+  # 3) build the ISEE formulas
+  mutate(
+    # 3a) Equivalence scale (D.P.C.M. 5 dicembre 2013, art. 2)
+    eq_scale_isee = 1.00 
+      + if_else(n_adults >= 2, 0.50, 0.00) 
+      + if_else(n_minors >= 1, 0.30, 0.00) 
+      + if_else(n_minors >  1, 0.20 * (n_minors - 1), 0.00) 
+      + (0.50 * n_disabling),
+
+    # 3b) value of “other homes” = total housing minus primary
+    val_other_homes = pmax(ar1 - valabit, 0),
+
+    # 3c) financial‐asset exemption (D.Lgs. 31 marzo 1998, n.109)
+    exempt_fin = case_when(
+      ncomp == 1       ~ 6000,
+      ncomp == 2       ~ 8000,
+      ncomp  >  2      ~ 8000 + (ncomp - 2) * 1000,
+      TRUE             ~ 0
+    ),
+
+    # net financial assets
+    fin_net_assets = pmax(af - exempt_fin, 0),
+
+    # total liabilities
+    pf_tot = pf,
+
+    # “rendita figurativa”
+    rendita_figurativa = 0.05 * (val_other_homes + fin_net_assets),
+
+    # ISEE numerator & final index
+    isee_num   = hh_income_net + rendita_figurativa,
+    isee_value = isee_num / eq_scale_isee
+  ) %>%
+  # 4) keep only what you need
+  dplyr::select(
+    nquest, year,
+    eq_scale_isee, hh_income_net, val_other_homes,
+    fin_net_assets, pf_tot, rendita_figurativa,
+    isee_num, isee_value
+  )
+
+
+
+panel_with_isee <- panel_vars %>%
+  left_join(
+    isee_panel,
+    by = c("nquest", "year")
+  )
+
 
 ```
 
@@ -219,27 +246,33 @@ Compute variables for analysis
 
     ```{r}
 
-    ```
+    panel_uni <- panel_with_isee %>%
+      group_by(nquest) %>%
+      filter(any(eta >= 18 & eta <= 30)) %>%
+      ungroup()
+      
+      
+    panel_ind <- panel_uni %>%
+      group_by(nquest) %>%
+      summarise(
+        hh_univ = if_else(any(univer == 1, na.rm = TRUE), 1L, 0L)
+      ) 
 
--   House ownership
-
-    ```{r}
-
-    ```
-
--   ISEE without house ownership
-
-    ```{r}
-
-    ```
-
--   Other controls useful for matching
-
-    ```{r}
+    panel_univ <- panel_uni %>%
+      left_join(panel_ind, by = "nquest")
 
 
 
+    panel_univ <- panel_univ %>%
+      group_by(nquest) %>%
+      mutate(
+        father_studio = stupcf,
+        mother_studio = stumcf,
+        own_house     = if_else(any(godabit == 1 | altrab == 1), 1L, 0L)
+      ) %>%
+      ungroup()
 
+    ### so the panel component 2010-2020 that has at least one member btw 18 and 30 is consisting of 5714 hhs with 46623 obs across the sample period
 
 
     ```
@@ -247,5 +280,7 @@ Compute variables for analysis
 ## Save panel as a tmp
 
 ```{r}
+
+saveRDS(panel_univ, here("data", "tmp","panel_univ.RDS"))
 
 ```
