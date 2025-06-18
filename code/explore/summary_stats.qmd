@@ -1,0 +1,129 @@
+---
+title: "Exploratory stats"
+format: html
+editor: visual
+---
+
+```{r}
+
+library(pacman)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  cowplot,
+  xtable,
+  renv,
+  mice,
+  weights,
+  gridExtra,
+  readxl,
+  ggplot2,
+  ipumsr,
+  dplyr,
+  data.table,
+  sf,
+  raster,
+  RSQLite,
+  lfe,
+  car,
+  countrycode,
+  patchwork,
+  fastDummies,
+  stargazer,
+  sandwich,
+  lmtest,
+  haven,
+  ggthemes,
+  RColorBrewer,
+  purrr,
+  viridis,
+  tidyr,
+  data.table,
+  here,
+  plm,
+  spdep,
+  robust,
+  lfe, 
+  doParallel,
+  foreach,
+  pryr,
+  fixest,
+  broom,
+  multiwayvcov
+)
+
+here::i_am("code/explore/summary_stats.qmd")
+
+
+```
+
+```{r}
+
+panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
+
+```
+
+## Exploratory Statistics 
+
+### 1) HOUSE OWNERSHIP  & INCOME
+
+####  House ownership along Income
+
+```{r}
+
+```
+
+#### House ownership along ISEE
+
+```{r}
+
+```
+
+### 2) UNIVERSITY ENROLLMENT AND EDUCATION
+
+#### Uni enroll and father´s education 
+
+```{r}
+
+```
+
+#### Uni enroll and mother´s education 
+
+```{r}
+
+```
+
+#### Uni enroll and previous own study
+
+```{r}
+
+```
+
+#### Uni enroll and regional location 
+
+```{r}
+
+```
+
+### 3) ISEE and house ownership 
+
+#### Weigth of house in ISEE
+
+```{r}
+
+```
+
+### 4) Table of summary key vars 
+
+#### Overall
+
+```{r}
+
+```
+
+#### Balance observables owners and not owners
+
+```{r}
+
+```

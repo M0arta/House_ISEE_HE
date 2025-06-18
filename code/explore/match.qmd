@@ -1,0 +1,333 @@
+---
+title: "pscore match"
+format: html
+editor: visual
+---
+
+```{r}
+
+library(pacman)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  cowplot,
+  xtable,
+  renv,
+  mice,
+  weights,
+  gridExtra,
+  readxl,
+  ggplot2,
+  ipumsr,
+  dplyr,
+  data.table,
+  sf,
+  raster,
+  RSQLite,
+  lfe,
+  car,
+  countrycode,
+  patchwork,
+  fastDummies,
+  stargazer,
+  sandwich,
+  lmtest,
+  haven,
+  ggthemes,
+  RColorBrewer,
+  purrr,
+  viridis,
+  tidyr,
+  data.table,
+  here,
+  plm,
+  spdep,
+  robust,
+  lfe, 
+  doParallel,
+  foreach,
+  pryr,
+  fixest,
+  broom,
+  multiwayvcov
+)
+
+here::i_am("code/explore/match.qmd")
+
+
+
+```
+
+```{r}
+panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
+```
+
+## P-score match 
+
+#### 1) Compute probability of enrolling university for everyone
+
+```{r}
+
+# na exlcude
+panel_for_analysis <- panel_univ %>%
+  filter(
+    !is.na(eta),
+    !is.na(sex),
+    !is.na(studio),
+    !is.na(annoedu),
+    !is.na(isco),
+    !is.na(ncomp),
+    !is.na(y),
+    !is.na(isee_value),
+    !is.na(hh_univ)
+  )
+
+logit_univ <- glm(
+  hh_univ ~ factor(studio)
+              + eta
+              + factor(sex)
+              + factor(ireg)
+              + factor(perl)
+              + factor(cit)
+              + factor(staciv)
+              + ncomp
+              + father_studio
+  data   = panel_univ,
+  family = binomial(link = "logit")
+)
+
+summary(logit_univ)
+
+#  Predict fitted probability P(hh_univ = 1) for all 2016 rows:
+
+panel_univ <- panel_univ %>%
+  mutate(
+    p_hat_univ = predict(
+      logit_univ,
+      newdata = panel_univ,
+      type    = "response"
+    )
+  )
+
+# Check how many NAs (these are the rows where at least one covariate was NA):
+
+table(is.na(panel_univ$p_hat_univ_16))
+
+
+```
+
+#### 2) Match houseowners and non-houseowners based on uni enroll outcome
+
+```{r}
+
+ps_model <- glm(
+  own_house ~ factor(studio)
+                 + eta
+                 + factor(sex)
+                 + factor(ireg)
+                 + factor(perl)
+                 + factor(cit)
+                 + factor(staciv)
+                 + ncomp
+                 + father_studio,
+  data   = panel_univ,
+  family = binomial(link = "logit")
+)
+
+summary(ps_model)
+
+# Predict PS for all rows (length = nrow(panel_univ))
+panel_univ<-panel_univ%>%
+  mutate(
+    ps_score = predict(
+      ps_model,
+      newdata = panel_univ,
+      type    = "response"
+    )
+  )
+```
+
+#### 3) Overlap and common support stats
+
+```{r}
+
+
+# Check the overlap of PS by treatment group:
+hist(
+  panel_univ$ps_score[panel_univ$own_house == 0],
+  col   = rgb(1, 0, 0, 0.4),
+  breaks= 40,
+  xlim  = c(0,1),
+  main  = "PS Distribution for being a Owner",
+  xlab  = "Conditional probability of being a Owner"
+)
+hist(
+  panel_univ$ps_score[panel_univ$own_house== 1],
+  col   = rgb(0, 0, 1, 0.4),
+  breaks= 40,
+  add   = TRUE
+)
+legend(
+  "topright",
+  legend = c("Own house", "Do not Own house"),
+  fill   = c(rgb(1, 0, 0, 0.4), rgb(0, 0, 1, 0.4))
+)
+
+
+# Prepare a factor variable for the two  groups
+panel_univ <- panel_univ %>%
+  mutate(
+    own_group = case_when(
+      own_house == 1 ~ "Own house",
+      own_house== 0 ~ "Do no Own house"
+    )
+  )
+
+# Compute the min/max PS for each group 
+
+ps_min_ineligible <- min(panel_univ$ps_score[panel_univ$own_house == 0], na.rm = TRUE)
+ps_max_ineligible <- max(panel_univ$ps_score[panel_univ$own_house == 0], na.rm = TRUE)
+ps_min_eligible   <- min(panel_univ$ps_score[panel_univ$own_house == 1], na.rm = TRUE)
+ps_max_eligible  <- max(panel_univ$ps_score[panel_univ$own_house == 1], na.rm = TRUE)
+
+pscore_plot <- ggplot(panel_univ, aes(x = ps_score, fill = own_group)) +
+  # 1) density curves
+  geom_density(alpha = 0.4, size = 0.2) +
+  # 2) dashed vertical lines at each group’s PS extremes
+  geom_vline(
+    xintercept = ps_min_ineligible,
+    linetype   = "dashed",
+    color      = "firebrick"
+  ) +
+  geom_vline(
+    xintercept = ps_max_ineligible,
+    linetype   = "dashed",
+    color      = "firebrick"
+  ) +
+  geom_vline(
+    xintercept = ps_min_eligible,
+    linetype   = "dashed",
+    color      = "steelblue"
+  ) +
+  geom_vline(
+    xintercept = ps_max_eligible,
+    linetype   = "dashed",
+    color      = "steelblue"
+  ) +
+  # 3) color scale and labels
+  scale_fill_manual(
+    values = c(
+      "Own house" = "firebrick",
+      "Do no own house"    = "steelblue"
+    )
+  ) +
+  labs(
+    x        = "Predicted Probability of being owner",
+    y        = "Density",
+    fill     = "Owners Group",
+    title    = "P-score Densities for enrolling uni by Ownership Group",
+    subtitle = "Dashed lines show each group’s PS support"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position  = "bottom",
+    plot.subtitle    = element_text(size = 10, color = "gray40")
+  )
+
+pscore_plot
+
+
+ggsave(here("output","plot","pscore_plot.pdf"), pscore_plot)
+
+
+```
+
+#### 4) Run nearest‐neighbor matching on the P-score
+
+```{r}
+
+
+m.out <- matchit(
+  below_isee ~ factor(studio)
+                + eta
+                + factor(sex)
+                + factor(ireg)
+                + factor(perl)
+                + factor(cit)
+                + factor(staciv)
+                + ncomp
+                + father_studio,
+  data     = panel_univ,
+  method   = "nearest",
+  distance = "logit",   # uses the logit of ps_score internally
+  caliper  = 0.2,       # no match outside ±0.2 logit‐PS
+  replace  = FALSE,
+  ratio    = 1          # 1:1 matching
+)
+
+summary(m.out, standardize = TRUE)
+#   - Look at Std. Mean Differences (SMDs) before vs after matching. 
+#   - You want every covariate’s SMD < 0.1 after matching.
+
+
+```
+
+#### 5) Look at the matched sample 
+
+```{r}
+# Extract the matched dataset (each row is one individual, but 
+# matched individuals that share the same household status will cluster on nquest)
+matched <- match.data(m.out)
+
+# Inspect the matched groups:
+matched %>%
+  group_by(own_house) %>%
+  summarise(
+    count       = n(),
+    mean_ps     = mean(ps_score, na.rm = TRUE),
+    mean_age    = mean(eta, na.rm = TRUE),
+    prop_male   = mean(sex == 1, na.rm = TRUE),
+    mean_studio = mean(as.numeric(studio), na.rm = TRUE),
+    mean_ncomp  = mean(ncomp, na.rm = TRUE),
+    mean_father_studio = mean(father_studio, na.rm = TRUE)
+  )
+```
+
+#### 6) Run reg in the matched sample 
+
+```{r}
+
+sum_matched  <- matched %>%
+  group_by(own_house) %>%
+  summarise(
+    hh_univ_rate = mean(hh_univ, na.rm = TRUE),
+    n            = n()
+  )
+
+effect <- glm(
+  hh_univ ~ own_house,
+  data   = matched,
+  family = binomial(link = "logit")
+)
+summary(effect)
+
+# Or, for a Linear Probability Model (LPM) on matched data:
+lpm <- lm(
+  hh_univ ~ own_house,
+  data   = matched
+)
+summary(lpm)
+```
+
+Change FE , controls, clusters
+
+```{r}
+
+```
+
+Export table
+
+```{r}
+
+```

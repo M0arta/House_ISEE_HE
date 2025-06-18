@@ -1,0 +1,104 @@
+---
+title: "OLS regression"
+format: html
+editor: visual
+---
+
+```{r}
+
+library(pacman)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  cowplot,
+  xtable,
+  renv,
+  mice,
+  weights,
+  gridExtra,
+  readxl,
+  ggplot2,
+  ipumsr,
+  dplyr,
+  data.table,
+  sf,
+  raster,
+  RSQLite,
+  lfe,
+  car,
+  countrycode,
+  patchwork,
+  fastDummies,
+  stargazer,
+  sandwich,
+  lmtest,
+  haven,
+  ggthemes,
+  RColorBrewer,
+  purrr,
+  viridis,
+  tidyr,
+  data.table,
+  here,
+  plm,
+  spdep,
+  robust,
+  lfe, 
+  doParallel,
+  foreach,
+  pryr,
+  fixest,
+  broom,
+  multiwayvcov
+)
+
+here::i_am("code/explore/simple_ols.qmd")
+
+
+
+```
+
+```{r}
+
+panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
+```
+
+### Simple OLS 
+
+-   Using the Panel of hhs with one component 18-30 y.o.
+
+```{r}
+
+```
+
+-   Add FE
+
+```{r}
+
+```
+
+-   Add clustering
+
+```{r}
+
+
+```
+
+-   Play with controls
+
+```{r}
+
+```
+
+-   Plot
+
+```{r}
+
+```
+
+-   Export table
+
+```{r}
+
+```
