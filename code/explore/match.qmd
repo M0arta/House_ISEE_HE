@@ -320,14 +320,105 @@ lpm <- lm(
 summary(lpm)
 ```
 
-Change FE , controls, clusters
+## match on pca
 
 ```{r}
 
+
+panel_univ$owner_any <- as.integer(panel_univ$houseown1 | panel_univ$houseown2)
+
+m_pc <- matchit(owner_any ~ PC1 + PC2 + factor(ireg),
+                data   = panel_univ,
+                method = "nearest",
+                distance = "mahalanobis")     # uses Mahalanobis on the PCs
+
+matched_pc <- match.data(m_pc)
+summary(m_pc)   # check balance on PC1, PC2, region
+
+
+
+
+
+
 ```
 
-Export table
+### Covariate balance after match on PCA 
 
 ```{r}
 
+## covariate balance pre-post table
+
+sum_pc <- summary(m_pc, standardize = TRUE, un = TRUE)
+
+pre  <- as.data.frame(sum_pc$sum.all)    # before matching
+post <- as.data.frame(sum_pc$sum.matched)
+
+
+pre_df <- pre %>%
+  tibble::rownames_to_column(var = "covariate") %>%
+  dplyr::select(covariate, `Std. Mean Diff.`) %>%
+  rename(smd = `Std. Mean Diff.`) %>%
+  mutate(stage = "Unmatched")
+
+post_df <- post %>%
+  tibble::rownames_to_column(var = "covariate") %>%
+  dplyr::select(covariate, `Std. Mean Diff.`) %>%
+  rename(smd = `Std. Mean Diff.`) %>%
+  mutate(stage = "Matched")
+
+
+
+balance_df <- bind_rows(pre_df, post_df) %>%
+  filter(
+    covariate %in% c("PC1","PC2", paste0("factor(ireg)", 2:20))
+  )
+
+
+ggplot(balance_df, aes(x = smd, y = reorder(covariate, smd), color = stage, shape = stage)) +
+  geom_vline(xintercept = 0,    color = "grey70") +
+  geom_vline(xintercept = 0.10, linetype = "dashed", color = "red") +
+  geom_point(size = 3, position = position_dodge(width = 0.5)) +
+  scale_color_manual("", values = c(Unmatched = "grey50", Matched = "navy")) +
+  scale_shape_manual("", values = c(Unmatched = 16, Matched = 17)) +
+  scale_x_continuous("Std. Mean Difference", labels = percent_format(accuracy = 1)) +
+  labs(
+    title    = "Covariate Balance: Before vs After Mahalanobis Matching",
+    subtitle = "Matching on PC1, PC2, and region",
+    y        = NULL,
+    caption  = "Red dashed line = |SMD| = 0.1"
+  ) +
+  theme_minimal(base_family = "Helvetica") +
+  theme(
+    legend.position    = "top",
+    axis.text.y        = element_text(size = 8),
+    axis.title.x       = element_text(size = 10),
+    plot.title         = element_text(face = "bold", size = 14),
+    plot.subtitle      = element_text(size = 11, color = "grey30")
+  )
+
+
+
 ```
+
+### Fit reg on matched sample 
+
+```{r}
+
+
+
+# Get your matched data.frame
+matched_pc <- match.data(m_pc)
+
+# 2a) Simple difference in means via OLS
+m1 <- lm(hh_univ ~ owner_any, data = matched_pc)
+coeftest(m1, vcov = vcovHC(m1, "HC1"))
+
+# 2b) Adjusted regression (still unbiased if match is good)
+m2 <- lm(hh_univ ~ owner_any + PC1 + PC2 + factor(ireg),
+         data = matched_pc)
+coeftest(m2, vcov = vcovHC(m2, "HC1"))
+
+
+```
+
+### Quantile reg on matched sample

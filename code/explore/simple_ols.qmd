@@ -11,6 +11,7 @@ library(pacman)
 if (!require("pacman")) install.packages("pacman")
 
 pacman::p_load(
+ relaimpo,
   cowplot,
   xtable,
   renv,
@@ -64,41 +65,354 @@ here::i_am("code/explore/simple_ols.qmd")
 panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
 ```
 
-### Simple OLS 
+### Simple OLS
 
 -   Using the Panel of hhs with one component 18-30 y.o.
 
 ```{r}
 
+library(lmtest)
+library(sandwich)
+library(modelsummary)
+
+panel_univ$owner_any <- ifelse(panel_univ$houseown1==1 | panel_univ$houseown2==1, 1, 0)
+
+# 1a) Define a helper for robust SEs
+robust_se <- function(model) {
+  sqrt(diag(vcovHC(model, type="HC1")))
+}
+
+# 1b) Estimate the models
+mods <- list(
+  "M1: Owner only" = glm(
+    hh_univ ~ owner_any,
+    family = binomial(link="logit"),
+    data   = panel_univ
+  ),
+  "M2: + Parental edu" = glm(
+    hh_univ ~ owner_any + father_studio,
+    family = binomial, data = panel_univ
+  ),
+  "M3: + Own edu" = glm(
+    hh_univ ~ owner_any + father_studio + studio,
+    family = binomial, data = panel_univ
+  ),
+  "M4: + Income" = glm(
+    hh_univ ~ owner_any + father_studio + studio + y,
+    family = binomial, data = panel_univ
+  ),
+  "M5: + Assets" = glm(
+    hh_univ ~ owner_any + father_studio + valabit + studio + y + fin_net_assets,
+    family = binomial, data = panel_univ
+  ),
+  "M6: + Region FE" = glm(
+    hh_univ ~ owner_any + father_studio + studio + valabit + y + fin_net_assets + factor(ireg),
+    family = binomial, data = panel_univ
+  )
+)
+
+
+coef_map <- c(
+  owner_any      = "Any Homeowner",
+  father_studio  = "Father Edu.",
+  studio         = "Own Edu.",
+  y              = "Income (euros)",
+  fin_net_assets     = "Net Financial Assets",
+  valabit = "House Value"
+)
+
+
+
+# A vcov function returning the HC1 variance‐covariance matrix
+vcov_hc1 <- function(x) {
+  sandwich::vcovHC(x, type = "HC1")
+}
+
+
+modelsummary(
+  mods,
+  coef_map  = coef_map,
+  vcov      = vcov_hc1,                  # now returns full matrix
+  statistic = "({std.error})",           # how to display SEs
+  stars     = c(`***`=0.001, `**`=0.01, `*`=0.05),
+  gof_omit  = "AIC|BIC|Log|Deviance",
+  title     = "Stepwise Logistic Regression of Household University Enrollment",
+  output    = "latex"
+)
+
+
 ```
 
--   Add FE
+-   Principal Component Analysis
 
 ```{r}
 
+# Run the PCA on your six SES variables
+ses_vars <- panel_univ %>%
+  dplyr::select(houseown1, houseown2,valabit, father_studio, studio, y, fin_net_assets) %>%
+  na.omit()
+
+ses_pca <- prcomp(ses_vars, scale. = TRUE)
+
+# Extract & round loadings for PC1 & PC2
+pca_loadings <- as.data.frame(ses_pca$rotation[,1:2])
+colnames(pca_loadings) <- c("PC1","PC2")
+pca_loadings <- round(pca_loadings, 3)
+
+
+library(xtable)
+print(
+  xtable(
+    pca_loadings,
+    caption = "PCA Loadings for the First Two Components",
+    label   = "tab:pca-loadings"
+  ),
+  include.rownames = TRUE,
+  booktabs          = TRUE,
+  caption.placement = "top"
+)
+
+load_df <- pca_loadings %>%
+  tibble::rownames_to_column("Variable") %>%
+  pivot_longer(cols = c(PC1,PC2), names_to = "Component", values_to = "Loading")
+
+load <- ggplot(load_df, aes(x = reorder(Variable, Loading), y = Loading, fill = Component)) +
+  geom_col(position="dodge") +
+  coord_flip() +
+  labs(
+    title = "PCA Loadings: PC1 vs. PC2",
+    x     = NULL, 
+    y     = "Loading"
+  ) +
+  theme_minimal(base_size = 11)
+
+load
+
+ggsave(here("output", "pca_load.pdf"), width = 5, height = 3, load)
+
+
+
+var_exp <- ses_pca$sdev^2 / sum(ses_pca$sdev^2) * 100
+df <- data.frame(PC = 1:length(var_exp), Var = var_exp)
+comp <- ggplot(df, aes(x=PC, y=Var)) +
+  geom_col(fill="steelblue") +
+  geom_line() + geom_point() +
+  labs(x="Principal Component", y="Percent Variance Explained") +
+  theme_minimal()
+
+comp
+
+ggsave(here("output", "pca_comp.pdf"), width=4, height=2.5, comp)
+
+
 ```
 
--   Add clustering
+-   PCA regression
+
+    ```{r}
+
+
+    complete_idx <- complete.cases(panel_univ[, c("houseown1","houseown2", "valabit","father_studio","studio","y","fin_net_assets")])
+    scores <- predict(ses_pca)[,1:2]
+
+    panel_univ$PC1 <- NA; panel_univ$PC2 <- NA
+    panel_univ$PC1[complete_idx] <- scores[,1]
+    panel_univ$PC2[complete_idx] <- scores[,2]
+
+
+    model_pca <- glm(
+      hh_univ ~ PC1 + PC2 + factor(ireg),
+      family = binomial(link="logit"),
+      data   = panel_univ
+    )
+
+
+    modelsummary(
+      list("PCA Logit" = model_pca),
+      coef_map  = c(PC1 = "PC1 (Overall SES)",
+                    PC2 = "PC2 (Assets vs. Educ)"),
+      statistic = "({std.error})",
+      stars     = c(`***`=0.001, `**`=0.01, `*`=0.05),
+      vcov      = function(x) vcovHC(x, "HC1"),
+      output    = "latex",
+      title     = "Logit of $\\text{hh\\_univ}$ on PC1 & PC2",
+      gof_omit  = "AIC|BIC|Log|Deviance"
+    )
+
+
+
+    ```
+
+-   Quintile regression
 
 ```{r}
 
 
+
+panel_univ <- panel_univ %>%
+  filter(!is.na(PC1), !is.na(PC2)) %>%
+  mutate(ses_q = ntile(PC1, 5))
+
+quintile_results <- panel_univ %>%
+  group_by(ses_q) %>%
+  do(tidy(
+    lm(hh_univ ~ 
+         houseown1 + houseown2 + valabit + PC2 +
+         father_studio + studio + y+ fin_net_assets+
+         factor(ireg),
+       data = .),
+    conf.int = TRUE
+  ))
+
+quintile_results
+
+
+
+plot_df <- quintile_results %>%
+  ungroup() %>%                        # drop the ses_q grouping
+  filter(term %in% c("houseown1","houseown2")) %>%
+  mutate(
+    owner_type = case_when(
+      term == "houseown1" ~ "Owner Type 1",
+      term == "houseown2" ~ "Owner Type 2"
+    ),
+    # Now factor() “sees” all five levels at once, so labels match:
+    ses_q = factor(ses_q,
+                   levels = 1:5,
+                   labels = paste0("Q", 1:5))
+  )
+
+
+
+quint <- ggplot(plot_df, aes(x = ses_q, y = estimate, color = term)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high),
+                  position = position_dodge(width = 0.5),
+                  fatten = 1.2) +
+  scale_color_brewer("Ownership Dummy", palette = "Set1") +
+  scale_x_discrete("SES Quintile (PC1 index)") +
+  scale_y_continuous("Estimated Effect on Pr(hh_univ)",
+                     labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "How the Home-Ownership “Bump” Varies Across the SES Distribution",
+    subtitle = "Coefficients ±95 % CI from OLS of hh_univ on ownership + controls, by SES quintile",
+    caption = "Controls: PC2, father_studio, studio, y, fin_assets, region FE"
+  ) +
+  theme_minimal(base_family = "Helvetica") +
+  theme(
+    legend.position    = "top",
+    plot.title         = element_text(face = "bold", size = 14),
+    plot.subtitle      = element_text(size = 11, color = "grey30"),
+    axis.title         = element_text(size = 11),
+    axis.text          = element_text(size = 9),
+    panel.grid.major.x = element_blank()
+  )
+
+
+quint 
+
+ggsave(here("output","quint_pcs.pdf"), quint)
 ```
 
--   Play with controls
+-   Relative Importance analysis
 
 ```{r}
 
+
+lpm_ses <- lm(
+  hh_univ ~ houseown1 + houseown2 + valabit + father_studio + studio + y + fin_net_assets,
+  data = panel_univ
+)
+
+rel_imp <- calc.relimp(lpm_ses, type = "lmg", rela = TRUE)
+
+imp_df <- data.frame(
+  Predictor = names(rel_imp$lmg),
+  Share     = rel_imp$lmg
+)
+
+
+pred <- ggplot(imp_df, aes(x = reorder(Predictor, Share), y = Share)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous("Share of R²", labels = percent_format(1)) +
+  labs(
+    title    = "Relative Importance of SES Predictors",
+    subtitle = "LMG decomposition of LPM for hh_univ",
+    x        = NULL
+  ) +
+  theme_minimal(base_size = 12)
+
+pred
+
+
+ggsave(here("output", "rel_impo.pdf"), pred)
+
 ```
 
--   Plot
+-   Actual Quintile regression
 
-```{r}
+    ```{r}
 
-```
 
--   Export table
+    library(quantreg)
 
-```{r}
 
-```
+    taus <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+
+    # 1) Recompute the “complete” logical index for PC1/PC2
+    complete_idx <- complete.cases(panel_univ[, c("PC1","PC2")])
+
+    # 2) Get the predictions on the link scale
+    linpred_vec <- predict(model_pca, type = "link")
+
+    # 3) Create a full‐length column of NAs
+    panel_univ$linpred <- NA_real_
+
+    # Fill in only the model rows
+    panel_univ$linpred[complete_idx] <- linpred_vec
+
+    # Quick check
+    sum(is.na(panel_univ$linpred))   # should equal number of rows with NA PC1/PC2
+
+
+    library(quantreg)
+    taus <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+
+    qr_mods <- lapply(taus, function(tau) {
+      rq(
+        linpred ~ owner_any + father_studio + studio + y + valabit + fin_net_assets,
+        tau    = tau,
+        data   = panel_univ,
+        subset = complete_idx,    # only use rows where linpred is non‐NA
+        method = "fn"
+      )
+    })
+
+
+    qr_coefs <- data.frame(tau = taus, est = NA, se = NA)
+    for(i in seq_along(qr_mods)){
+      s <- summary(qr_mods[[i]], se="nid")
+      qr_coefs$est[i] <- s$coefficients["owner_any","Value"]
+      qr_coefs$se[i]  <- s$coefficients["owner_any","Std. Error"]
+    }
+
+    qr_coefs <- qr_coefs %>%
+      mutate(lwr = est - 1.96*se,
+             upr = est + 1.96*se)
+
+
+    latent <- ggplot(qr_coefs, aes(tau, est)) +
+      geom_line() +
+      geom_ribbon(aes(ymin=lwr,ymax=upr), alpha=0.2) +
+      scale_x_continuous("Propensity Quantile (τ)", breaks = taus) +
+      scale_y_continuous("Effect of Ownership on Log-Odds", labels=percent_format(1)) +
+      labs(
+        title    = "Quantile Regression on the Logit Propensity Index",
+        subtitle = "Home‐ownership coefficient ±95% CI"
+      ) +
+      theme_minimal()
+
+
+    ggsave(here("output","latent_quintile.pdf"), latent)
+    ```
