@@ -68,15 +68,412 @@ panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
 
 ### 1) HOUSE OWNERSHIP  & INCOME
 
-####  House ownership along Income
+####  House ownership along ISEE
 
 ```{r}
+
+breaks_vec <- c(0, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 60000, Inf)
+labels_vec <- c(
+  "0–10 k", 
+  "10–15 k", 
+  "15–20 k", 
+  "20–25 k", 
+  "25–30 k", 
+  "30–35 k", 
+  "35–40 k", 
+  "40–60 k", 
+  "> 60 k"
+)
+
+panel_univ <- panel_univ %>%
+  mutate(
+  #bucket hhs in bins
+    isee_bin = cut(
+      isee_value,
+      breaks = breaks_vec,
+      labels = labels_vec,
+      include.lowest = TRUE,
+      right = FALSE
+    )
+  )
+
+
+sum_panel<- panel_univ %>%
+  group_by(isee_bin) %>%
+  summarise(
+    prop_primary   = mean(houseown1, na.rm = TRUE),
+    prop_secondary = mean(houseown2, na.rm = TRUE),
+    n_obs          = n(),
+    .groups        = "drop"
+  ) %>%
+  filter(n_obs > 0)
+
+
+plot_panel <- sum_panel %>%
+  dplyr::select(isee_bin, prop_primary, prop_secondary) %>%
+  pivot_longer(
+    cols      = c("prop_primary", "prop_secondary"),
+    names_to  = "Type",
+    values_to = "Proportion"
+  ) %>%
+  filter(!is.na(isee_bin))%>%
+  mutate(
+    typ = Type , 
+    typ = ifelse(typ == "prop_primary", "Owns Primary Residence","Owns more than one house")
+)
+
+
+
+
+
+p_house <- ggplot(plot_panel, aes(
+  x     = isee_bin,
+  y     = Proportion,
+  color = typ,
+  group = typ
+)) +
+  geom_line(size = 1) +
+  geom_point(size = 2.5) +
+  scale_y_continuous(
+    name   = "Share of Households",
+    labels = percent_format(accuracy = 1),
+    limits = c(0, max(plot_panel$Proportion) * 1.05)
+  ) +
+  scale_color_manual(
+    name   = "",
+    values = c(
+      "Owns Primary Residence" = "#1B9E77",  # green
+      "Owns more than one house"       = "#D95F02"   # orange
+    )
+  ) +
+  labs(
+    x      = "ISEE Bracket (EUR)",
+    title  = "Primary vs. Secondary Home Ownership by ISEE Bracket",
+    subtitle = "Proportion of households in that ISEE range primary vs. own a second home"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.title.x     = element_text(size = 12, face = "bold"),
+    axis.text.x      = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.title.y     = element_text(size = 12, face = "bold"),
+    plot.title       = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle    = element_text(size = 11, hjust = 0.5),
+    legend.position  = "bottom",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+p_house
+
+#ggsave(here("output","isee_homeownership_bins_2016_uni.pdf"), width = 8, height = 5, prop_house16)
+
 
 ```
 
-#### House ownership along ISEE
+#### House ownership by type of acquisition
 
 ```{r}
+
+#table(panel_univ$poss.x)
+
+panel_univ$poss <- ifelse(panel_univ$poss.x == 98 , NA, panel_univ$poss.x)
+
+
+df_q <- panel_univ %>%
+  filter(godabit == 1) %>%
+  mutate(
+    income_q = ntile(y, 5), 
+    income_q = factor(income_q,
+                      levels = 1:5,
+                      labels = c("Q1\n(Lowest)",
+                                 "Q2",
+                                 "Q3",
+                                 "Q4",
+                                 "Q5\n(Highest)"))
+  )
+
+df_q <- df_q %>%
+  mutate(
+    poss_cat = case_when(
+      poss == 1 ~ "Bought private",
+      poss == 2 ~ "Bought company",
+      poss == 3 ~ "Bought public",
+      poss == 4    ~ "Inherited",
+      poss == 5    ~ "Part Bought / Part Inherited",
+      poss == 6    ~ "Gift",
+      poss == 7    ~ "Built",
+      poss == 8    ~ "Other",
+      TRUE          ~ NA_character_
+    ),
+    # add any missing levels so fct_relevel won't complain
+    poss_cat = fct_expand(poss_cat,
+                          "Bought private", "Bought company", "Bought public",  "Inherited", "Part Bought / Part Inherited",
+                          "Gift", "Built", "Other"),
+    poss_cat = fct_relevel(poss_cat,
+                           "Bought private", "Bought company", "Bought public", "Inherited",
+                           "Part Bought / Part Inherited",
+                           "Gift", "Built", "Other")
+  )
+
+
+
+df_q <- df_q %>%
+  filter(!is.na(poss_cat))
+
+
+shares <- df_q %>%
+  group_by(income_q, poss_cat) %>%
+  summarise(n = n(), .groups="drop_last") %>%
+  mutate(share = n / sum(n)) %>%
+  ungroup()
+
+
+ggplot(shares, aes(x = income_q, y = share, fill = poss_cat)) +
+  geom_col(width = 0.75, colour = "white", size = 0.2) +
+  scale_y_continuous(labels = scales::percent_format(1)) +
+  scale_fill_brewer("Ownership type", palette = "Set2") +
+  labs(
+    x = "Income quintile",
+    y = "Share of households (with godabit = 1)",
+    title = "Ownership composition by income quintile",
+    subtitle = "Households with godabit == 1; categories of how dwelling was acquired"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x      = element_text(size = 12),
+    legend.position  = "bottom"
+  )
+
+
+
+ggplot(shares, aes(x = income_q, y = share, fill = poss_cat, group = poss_cat)) +
+  geom_area(position = "fill", colour = NA) +
+  scale_y_continuous(labels = scales::percent_format(1)) +
+  scale_fill_brewer("Ownership type", palette = "Set2") +
+  labs(
+    x = "Income quintile",
+    y = "Share",
+    title = "Ownership composition by income quintile (area)",
+    subtitle = "100% stacked area of acquisition type, godabit == 1"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "right")
+
+
+
+
+
+
+df_inh <- panel_univ %>%
+  filter(godabit == 1, poss == 4) %>%        # poss==4 → inherited
+  mutate(
+    income_q = ntile(y, 5),
+    income_q = factor(income_q,
+                      levels = 1:5,
+                      labels = c("Q1\n(Lowest)",
+                                 "Q2", "Q3", "Q4",
+                                 "Q5\n(Highest)"))
+  )
+
+
+shares_inh <- panel_univ %>%
+  filter(godabit == 1) %>%                   # all relevant households
+  mutate(
+    income_q = ntile(y, 5),
+    income_q = factor(income_q,
+                      levels = 1:5,
+                      labels = c("Q1\n(Lowest)",
+                                 "Q2", "Q3", "Q4",
+                                 "Q5\n(Highest)"))
+  ) %>%
+  group_by(area5, income_q) %>%
+  summarise(
+    total      = n(),
+    inherited  = sum(poss == 4, na.rm = TRUE),
+    share_inh  = inherited / total,
+    .groups = "drop"
+  )
+
+
+# replace the levels/labels with your real region names
+region_labels <- c("North", "East", "South", "West", "Central")
+
+df_inh <- df_inh %>%
+  mutate(
+    ireg = factor(area5,
+                  levels = seq_along(region_labels),
+                  labels = region_labels)
+  )
+
+
+ggplot(shares_inh, aes(x = income_q, y = share_inh, fill = factor(area5))) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  scale_y_continuous(labels = scales::percent_format(1)) +
+  scale_fill_discrete(
+    name   = "Region",
+    labels = c("North", "East", "South", "West", "Central")
+  ) +
+  labs(
+    x     = "Income quintile",
+    y     = "Share inherited",
+    title = "Inherited dwellings by Region & Income Quintile"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom")
+
+
+
+################
+
+
+df_model <- panel_univ %>%
+  filter(godabit == 1) %>%
+  mutate(
+    # Create a 0/1 numeric outcome
+    inherited01 = as.numeric(poss == 4),     
+
+    # Income quintiles
+    income_q = ntile(y, 5),
+    income_q = factor(income_q,
+                      levels = 1:5,
+                      labels = c("Q1\n(Lowest)",
+                                 "Q2", "Q3", "Q4",
+                                 "Q5\n(Highest)")),
+
+    # Region factor
+    area5 = factor(area5,
+                  levels = 1:5,
+                  labels = c("North","East","South","West","Central"))
+  ) %>%
+  dplyr::select(-poss)   
+
+
+mod_inh <- glm(
+  inherited01 ~ income_q * area5,
+  data   = df_model,
+  family = binomial(link = "logit")
+)
+
+
+preds <- ggpredict(mod_inh, terms = c("income_q","area5"))
+
+
+
+ggplot(preds, aes(x = x, y = predicted)) +
+  geom_point(size = 3, colour = "#2C3E50") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2, colour = "#2C3E50") +
+  facet_wrap(~ group, ncol = 3) +
+  scale_x_discrete(name = "Income Quintile") +
+  scale_y_continuous(name = "Pr(Inherited)", labels = percent_format(1)) +
+  labs(
+    title    = "Predicted Probability of Inherited Dwelling\nby Income Quintile & Region",
+    subtitle = "Logistic model among godabit == 1 households",
+    caption  = "Points = estimate, bars = 95% CI"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.background   = element_blank(),
+    strip.text         = element_text(face = "bold"),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title         = element_text(face = "bold", size = 14),
+    plot.subtitle      = element_text(size = 11)
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+################
+
+
+df_model <- panel_univ %>%
+  filter(godabit == 1) %>%
+  mutate(
+    # binary outcome
+    inherited01 = as.integer(poss == 4),
+    # income quintile factor
+    income_q = ntile(y, 5) %>%
+               factor(1:5,
+                      labels = c("Q1\n(Lowest)",
+                                 "Q2","Q3","Q4",
+                                 "Q5\n(Highest)")),
+    # area5 as a factor (not a number!)
+    area5 = factor(area5,
+                   levels = 1:5,
+                   labels = c("North","East","South","West","Central"))
+  ) %>%
+  select(-poss)   # drop the original
+
+
+mod_inh <- glm(
+  inherited01 ~ income_q * area5,
+  data   = df_model,
+  family = binomial(link = "logit")
+)
+
+
+preds <- ggpredict(mod_inh,
+                   terms = c("income_q",   # all 5 quintiles
+                             "area5"))     # all 5 factor levels
+
+
+table(preds$x, preds$group)
+
+newdata <- expand.grid(
+  income_q = levels(df_model$income_q),
+  area5    = levels(df_model$area5)
+)
+
+newdata$income_q <- factor(newdata$income_q, levels=levels(df_model$income_q))
+newdata$area5    <- factor(newdata$area5,    levels=levels(df_model$area5))
+
+lp <- predict(mod_inh, newdata, type = "link", se.fit = TRUE)
+
+heat   <- newdata %>%
+  mutate(
+    fit       = lp$fit,
+    se        = lp$se.fit,
+    pred      = plogis(fit),
+    conf.low  = plogis(fit - 1.96*se),
+    conf.high = plogis(fit + 1.96*se),
+    pct       = percent(pred, accuracy = 0.1)
+  )
+
+
+ggplot(heat, aes(x = income_q, y = area5, fill = pred)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = pct), size = 3) +
+  scale_fill_distiller(
+    name    = "Pr(inherited)",
+    palette = "Blues",
+    labels  = percent_format(1)
+  ) +
+  labs(
+    title = "Modeled Pr(Inherited) by Income Quintile & Area5",
+    x     = "Income Quintile",
+    y     = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x     = element_text(face = "bold"),
+    axis.text.y     = element_text(face = "bold"),
+    panel.grid      = element_blank(),
+    legend.position = "right"
+  )
+
+
 
 ```
 

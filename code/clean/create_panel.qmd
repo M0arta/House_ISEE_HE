@@ -62,7 +62,6 @@ here::i_am("code/clean/create_panel.qmd")
     ```{r}
 
 
-    Git reset—hard 2f5fca21a4db6a32f954495c4a082cc8082e5c8e 
 
 
     years <- c("2010", "2012", "2014", "2016", "2020")
@@ -156,7 +155,7 @@ valabit = if_else(is.na(valabit.x), 0, valabit.x),
     fin_assets = if_else(is.na(ar), 0, ar),
     debts = if_else(is.na(bd), 0, bd),
     houseown1 = if_else(godabit == 1, 1,0),
-    houseown2 = if_else(altrab ==1, 1,0) 
+    houseown2 = if_else(altrab == 1, 1,0) 
 )
 
 ```
