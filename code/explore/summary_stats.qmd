@@ -64,11 +64,11 @@ panel_univ <- readRDS(here("data", "tmp","panel_univ.RDS"))
 
 ```
 
-## Exploratory Statistics 
+## Exploratory Statistics
 
-### 1) HOUSE OWNERSHIP  & INCOME
+### 1) HOUSE OWNERSHIP & INCOME
 
-####  House ownership along ISEE
+#### House ownership along ISEE
 
 ```{r}
 
@@ -166,8 +166,116 @@ p_house <- ggplot(plot_panel, aes(
 
 p_house
 
-#ggsave(here("output","isee_homeownership_bins_2016_uni.pdf"), width = 8, height = 5, prop_house16)
+ggsave(here("output","isee_homeownership_bins_2016_uni.pdf"), width = 8, height = 5, prop_house16)
 
+
+```
+
+##### Same but using ner income instead of ISEE as running variable 
+
+```{r}
+
+breaks_inc <- c(0, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 60000, Inf)
+labels_inc <- c(
+  "0–10 k", 
+  "10–15 k", 
+  "15–20 k", 
+  "20–25 k", 
+  "25–30 k", 
+  "30–35 k", 
+  "35–40 k", 
+  "40–60 k", 
+  "> 60 k"
+)
+
+
+panel_univ <- panel_univ %>%
+  mutate(
+    income_bin = cut(
+      hh_income_net,
+      breaks        = breaks_inc,
+      labels        = labels_inc,
+      include.lowest= TRUE,
+      right         = FALSE
+    )
+  )
+
+
+sum_inc <- panel_univ %>%
+  group_by(income_bin) %>%
+  summarise(
+    prop_primary   = mean(houseown1, na.rm = TRUE),
+    prop_secondary = mean(houseown2, na.rm = TRUE),
+    n_obs          = n(),
+    .groups        = "drop"
+  ) %>%
+  filter(!is.na(income_bin) & n_obs > 0)
+
+
+plot_inc <- sum_inc %>%
+  dplyr::select(income_bin, prop_primary, prop_secondary) %>%
+  pivot_longer(
+    cols      = c(prop_primary, prop_secondary),
+    names_to  = "Type",
+    values_to = "Proportion"
+  ) %>%
+  mutate(
+    Type = dplyr::recode(
+      Type,
+      prop_primary   = "Owns Primary Residence",
+      prop_secondary = "Owns Secondary Residence"
+    )
+  )
+
+
+p_income <- ggplot(plot_inc, aes(
+    x     = income_bin,
+    y     = Proportion,
+    color = Type,
+    group = Type
+  )) +
+  geom_line(size = 1) +
+  geom_point(size = 2.5) +
+  scale_y_continuous(
+    name   = "Share of Households",
+    labels = percent_format(accuracy = 1),
+    limits = c(0, max(plot_inc$Proportion) * 1.05)
+  ) +
+  scale_color_manual(
+    name   = "",
+    values = c(
+      "Owns Primary Residence"   = "#1B9E77",  # green
+      "Owns Secondary Residence" = "#D95F02"   # orange
+    )
+  ) +
+  labs(
+    x        = "Household Net Income Bracket (EUR)",
+    title    = "Home Ownership by Income Bracket",
+    subtitle = "Proportion of households owning primary vs. secondary residence"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.title.x     = element_text(size = 12, face = "bold"),
+    axis.text.x      = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.title.y     = element_text(size = 12, face = "bold"),
+    plot.title       = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle    = element_text(size = 11, hjust = 0.5),
+    legend.position  = "bottom",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+
+
+print(p_income)
+ggsave(
+  here("output","income_homeownership_bins.pdf"),
+  plot   = p_income,
+  width  = 8,
+  height = 5
+)
 
 ```
 
@@ -479,13 +587,13 @@ ggplot(heat, aes(x = income_q, y = area5, fill = pred)) +
 
 ### 2) UNIVERSITY ENROLLMENT AND EDUCATION
 
-#### Uni enroll and father´s education 
+#### Uni enroll and father´s education
 
 ```{r}
 
 ```
 
-#### Uni enroll and mother´s education 
+#### Uni enroll and mother´s education
 
 ```{r}
 
@@ -497,13 +605,13 @@ ggplot(heat, aes(x = income_q, y = area5, fill = pred)) +
 
 ```
 
-#### Uni enroll and regional location 
+#### Uni enroll and regional location
 
 ```{r}
 
 ```
 
-### 3) ISEE and house ownership 
+### 3) ISEE and house ownership
 
 #### Weigth of house in ISEE
 
@@ -511,16 +619,130 @@ ggplot(heat, aes(x = income_q, y = area5, fill = pred)) +
 
 ```
 
-### 4) Table of summary key vars 
+### 4) Table of summary key vars
 
 #### Overall
 
 ```{r}
 
+library(kableExtra)
+
+panel_summary <- panel_univ %>%
+  group_by(year) %>%
+  summarise(
+    indiv    = n_distinct(nquest,  na.rm = TRUE),  
+    sex              = mean(sex,             na.rm = TRUE),
+    eta              = mean(eta,             na.rm = TRUE),
+    studio           = mean(studio,          na.rm = TRUE),
+    hh_univ          = mean(hh_univ,         na.rm = TRUE),
+    parent_studio    = mean(parent_studio,   na.rm = TRUE),
+    own_house        = mean(own_house,       na.rm = TRUE),
+    hh_income_net    = mean(hh_income_net,   na.rm = TRUE),
+    valabit          = mean(valabit,         na.rm = TRUE),
+    fin_net_assets   = mean(fin_net_assets,  na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+panel_summary <- panel_summary %>%
+  mutate(across(-c(year, indiv), ~ round(.x, 2)))
+
+
+table <- panel_summary %>%
+  rename(
+    Year               = year,
+    `N`  = indiv,
+    Sex                 = sex,
+    Age                 = eta,
+    Study               = studio,
+    `HH Univ`           = hh_univ,
+    `Parent Study`      = parent_studio,
+     `Owner`             = own_house,
+    `HH Income Net`     = hh_income_net,
+    `Valabit`           = valabit,
+    `Fin Net Assets`    = fin_net_assets
+  ) %>%
+  kbl(
+    format       = "latex",
+    booktabs     = TRUE,
+    caption      = "Descriptive Statistics by Year",
+    label        = "tab:desc_stats"
+  ) %>%
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size     = 8
+  ) %>%
+  pack_rows("Summary", 1, nrow(panel_summary))
+
+cat(table)
 ```
 
-#### Balance observables owners and not owners
+### Uni enrollment by income quintile and tenure
 
 ```{r}
 
+
+library(forcats)
+
+
+quintile_plot_df <- panel_univ %>%
+  filter(!is.na(hh_univ), !is.na(hh_income_net), !is.na(own_house)) %>%
+  mutate(
+    income_quintile = ntile(hh_income_net, 5),
+    income_quintile = factor(income_quintile,
+                              levels = 1:5,
+                              labels = paste0("Q",1:5)),
+    # turn the 0/1 variable into a proper factor with labels
+    tenure = factor(own_house,
+                    levels = c(0, 1),
+                    labels = c("Renters", "Owners"))
+  ) %>%
+  group_by(income_quintile, tenure) %>%
+  summarise(
+    share_hh_univ = mean(hh_univ, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+quint <- ggplot(quintile_plot_df, aes(
+    x    = income_quintile,
+    y    = share_hh_univ,
+    fill = tenure
+  )) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_text(aes(label = percent(share_hh_univ, accuracy = 1)),
+            position = position_dodge(width = 0.7),
+            vjust = -0.3,
+            size = 3) +
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  scale_fill_manual(
+    values = c("Renters" = "#1f77b4", "Owners" = "#ff7f0e"),
+    name   = ""
+  ) +
+  labs(
+    title    = "University Enroll. by Income Quintile & Tenure",
+    subtitle = "Share of households with at least one 18 - 30 year-old in university",
+    x        = "Income Quintile (1 = lowest)",
+    y        = "Share of Households",
+    caption  = "Source: Bank of Italy Survey"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle    = element_text(size = 10, hjust = 0.5, margin = margin(b = 10)),
+    axis.title       = element_text(face = "bold"),
+    axis.text.x      = element_text(vjust = 0.5, hjust = 0.5),
+    legend.position  = "bottom",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+ggsave(here("output","quintile_uni.pdf"), quint)
 ```
+
+### 

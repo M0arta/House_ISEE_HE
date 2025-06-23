@@ -1,0 +1,467 @@
+---
+title: "Universities data"
+format: html
+editor: visual
+---
+
+### University data to give overview 
+
+```{r}
+
+
+library(pacman)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  cowplot,
+  xtable,
+  renv,
+  mice,
+  weights,
+  gridExtra,
+  ggalluvial,
+  readxl,
+  kableExtra,
+  circlize,
+  ggplot2,
+  stringr,
+  rnaturalearthdata,
+  ipumsr,
+  dplyr,
+  data.table,
+  sf,
+  raster,
+  RSQLite,
+  lfe,
+  car,
+  countrycode,
+  patchwork,
+  fastDummies,
+  stargazer,
+  sandwich,
+  lmtest,
+  haven,
+  rnaturalearth,
+  ggthemes,
+  RColorBrewer,
+  purrr,
+  viridis,
+  tidyr,
+  data.table,
+  here,
+  plm,
+  spdep,
+  robust,
+  lfe, 
+  doParallel,
+  foreach,
+  pryr,
+  fixest,
+  broom,
+  multiwayvcov
+)
+
+here::i_am("code/explore/uni_data.qmd")
+
+```
+
+#### Immatriculated out of region data
+
+```{r}
+
+fuori_sede <- read.csv(here("data", "raw", "immatric.csv"), sep = ";")
+
+
+fuori_sede <- fuori_sede %>%
+  filter(ProvinciaSedeDiploma != "PROVINCIA NON DEFINITA" & ProvinciaSedeDiploma != "PROVINCIA ESTERA")
+
+
+italy_map <- ne_states(country = "Italy", returnclass = "sf")
+
+
+
+italy_map_j <- italy_map %>%
+  mutate(name = if_else(name == "Turin", "Torino", name))
+
+
+fuori_sede <- fuori_sede %>%
+  mutate(
+    prov_diploma = str_to_title(tolower(ProvinciaSedeDiploma)),
+    prov_corso   = str_to_title(tolower(ProvinciaSedeCorso))
+  )
+
+lookup <- st_drop_geometry(italy_map_j) %>%
+  dplyr::select(name, region) %>%
+  mutate(name = str_to_title(tolower(name)))
+
+
+fuori_sede_l <- fuori_sede %>%
+  left_join(lookup, by = c("prov_diploma" = "name")) %>%
+  rename(region_diploma = region)
+
+
+fuori_sede_lg <- fuori_sede_l %>%
+  left_join(lookup, by = c("prov_corso" = "name")) %>%
+  rename(region_corso = region)
+
+province_imm_changes <- fuori_sede_lg %>%
+  filter(AnnoA == "2016/2017") %>% 
+  group_by(prov_diploma, region_diploma) %>%
+  summarise(
+    total_imm      = sum(Imm, na.rm = TRUE),
+    stayers        = sum(Imm[prov_diploma == prov_corso], na.rm = TRUE),
+    leavers        = sum(Imm[prov_diploma != prov_corso], na.rm = TRUE),
+    region_leavers = sum(Imm[region_diploma != region_corso], na.rm = TRUE),
+    .groups        = "drop"
+  ) %>%
+  mutate(
+    perc_stayers        = (stayers / total_imm) * 100,
+    perc_leavers        = (leavers / total_imm) * 100,
+    perc_region_leavers = (region_leavers / total_imm) * 100)
+  
+
+print(province_imm_changes)
+
+italy_map_joined <- italy_map_j %>%
+  left_join(province_imm_changes, by = c("name" = "prov_diploma"))
+
+ggplot(italy_map_joined) +
+  geom_sf(aes(fill = perc_region_leavers), color = "white") +
+  scale_fill_viridis_c(option = "plasma", name = "Percentage\nRegion Leavers", na.value = "grey90") +
+  labs(
+    title = "Percentage of Imm Students Leaving their Region (2016/2017)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+
+
+top_5 <- province_imm_changes %>%
+  filter(!is.na(region_diploma))%>%
+  arrange( -(perc_region_leavers) )%>%
+  head(5)
+
+print(top_5)
+
+
+region_imm_changes <- fuori_sede_lg %>%
+  filter(AnnoA == "2016/2017") %>%  
+  group_by(region_diploma) %>%
+  summarise(
+    total_imm = sum(Imm, na.rm = TRUE),
+    stayers   = sum(Imm[region_diploma == region_corso], na.rm = TRUE),
+    leavers   = sum(Imm[region_diploma != region_corso], na.rm = TRUE),
+    .groups   = "drop"
+  ) %>%
+  mutate(
+    perc_leavers = (leavers / total_imm) * 100
+  )
+
+print(region_imm_changes)
+
+
+top5_regions <- region_imm_changes %>%
+  arrange(desc(perc_leavers)) %>%
+  head(5)
+
+print(top5_regions)
+
+italy_map_reg <- italy_map_j %>%
+  mutate(name = str_to_title(tolower(name)))
+
+italy_map_joined <- italy_map_reg %>%
+  left_join(region_imm_changes, by = c("region" = "region_diploma"))
+
+ggplot(italy_map_joined) +
+  geom_sf(aes(fill = perc_leavers), color = "white") +
+  scale_fill_viridis_c(option = "plasma", name = "Percentage\nLeavers", na.value = "grey90") +
+  labs(
+    title = "Percentage of Imm Students Leaving their Region (2016/2017)",
+    subtitle = "Calculated as percentage of Imm students leaving their diploma region"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+
+library(viridis)
+library(ggspatial)
+
+ggplot(italy_map_joined) +
+
+  geom_sf(aes(fill = perc_leavers), color = "gray80", size = 0.2) +
+  
+  scale_fill_viridis_c(
+    option    = "plasma",
+    direction = -1,
+    name      = "Leavers\n(%)",
+    labels    = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title    = "Students Leaving Their Diploma Region to go to University",
+    subtitle = "A.Y. 2016/17 — % of students studying outside their home region",
+    caption  = "Source: USTAT"
+  ) +
+  annotation_scale(
+    location   = "bl", 
+    width_hint = 0.2, 
+    style      = "bar"
+  ) +
+  theme_void() +
+  theme(
+    plot.title    = element_text(size = 18, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 10)),
+    plot.caption  = element_text(size = 8, hjust = 1, margin = margin(t = 10)),
+  
+    legend.background = element_rect(fill = "white", color = NA, size = 0.2),
+    legend.key        = element_rect(fill = "white", color = NA),
+    legend.title      = element_text(size = 10, face = "bold"),
+    legend.text       = element_text(size = 9)
+  )
+
+
+```
+
+## Flows plot (circle)
+
+```{r}
+
+top5_region_names <- top5_regions$region_diploma
+
+sankey_data <- fuori_sede_lg %>%
+  filter(AnnoA == "2016/2017",
+         region_diploma %in% top5_region_names,
+         region_diploma != region_corso) %>%
+  group_by(region_diploma, region_corso) %>%
+  summarise(Imm_flow = sum(Imm, na.rm = TRUE), .groups = "drop")%>%
+  group_by(region_diploma) %>%
+  mutate(total_flow = sum(Imm_flow),
+         perc_flow  = (Imm_flow / total_flow) * 100) %>%
+  ungroup() %>%
+  filter(perc_flow >= 1)
+
+
+
+sankey_data$region_diploma <- ifelse(sankey_data$region_diploma == "Trentino-Alto Adige", "Trentino", sankey_data$region_diploma)
+
+
+sankey_data$region_corso <- ifelse(sankey_data$region_corso == "Trentino-Alto Adige", "Trentino", sankey_data$region_corso)
+
+
+
+sankey_data$region_diploma <- ifelse(sankey_data$region_diploma == "Friuli-Venezia Giulia", "Friuli", sankey_data$region_diploma)
+
+
+sankey_data$region_corso <- ifelse(sankey_data$region_corso == "Friuli-Venezia Giulia", "Friuli", sankey_data$region_corso)
+
+ggplot(sankey_data, aes(axis1 = region_diploma, axis2 = region_corso, y = Imm_flow)) +
+  geom_alluvium(aes(fill = region_diploma), width = 1/12, alpha = 0.8) +
+  geom_stratum(width = 1/12, fill = "grey20", color = "white") +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)),
+            size = 3, color = "white") +
+  scale_x_discrete(limits = c("region_diploma", "region_corso"),
+                   labels = c("Source", "Destination"),
+                   expand = c(.05, .05)) +
+  labs(
+    title = "Sankey Diagram for Each Source Region (Top 10, 2016/2017)",
+    y = "Number of Imm Students",
+    fill = "Source Region"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    strip.text = element_text(size = 12)
+  )
+
+
+
+top5_destination_regions <- fuori_sede_lg %>%
+  filter(AnnoA == "2016/2017", region_diploma != region_corso) %>%  # Only consider imm students who change region
+  group_by(region_corso) %>%
+  summarise(total_incoming = sum(Imm, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(share = total_incoming / sum(total_incoming) * 100) %>%
+  arrange(desc(share)) %>%
+  head(5)
+
+print(top5_destination_regions)
+
+kable(top5_destination_regions)
+
+top5_dest <- top5_destination_regions$region_corso
+
+chord_data <- fuori_sede_lg %>%
+  filter(AnnoA == "2016/2017", 
+         region_corso %in% top5_dest, 
+         region_diploma != region_corso) %>%
+  group_by(region_diploma, region_corso) %>%
+  summarise(Imm_flow = sum(Imm, na.rm = TRUE), .groups = "drop")
+
+
+hord_matrix <- chord_data %>%
+  pivot_wider(names_from = region_corso, values_from = Imm_flow, values_fill = list(Imm_flow = 0)) %>%
+  tibble::column_to_rownames("region_diploma") %>%
+  as.matrix()
+
+
+
+groups <- unique(c(rownames(hord_matrix), colnames(hord_matrix)))
+mycolors <- colorRampPalette(brewer.pal(12, "Set3"))(length(groups))
+names(mycolors) <- groups
+
+chordDiagram(hord_matrix, grid.col = mycolors, transparency = 0.5, annotationTrack = "grid")
+legend("topright", legend = names(mycolors), fill = mycolors, border = NA, cex = 0.8, title = "Regions")
+
+
+top5_dest <- top5_destination_regions$region_corso
+
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  sec_name <- get.cell.meta.data("sector.index")
+  if(sec_name %in% top5_dest) {
+    pct <- top5_destination_regions$share[top5_destination_regions$region_corso == sec_name]
+    label <- paste0(sec_name, " (", round(pct, 1), "%)")
+    ylim <- get.cell.meta.data("ylim")
+    offset <- -2 * (ylim[2] - ylim[1])  # adjust multiplier as needed for spacing
+    circos.text(
+      x = mean(get.cell.meta.data("xlim")),
+      y = ylim[1] - offset,  # shift text further away from the circle
+      labels = label,
+      facing = "outside", 
+      niceFacing = TRUE,
+      adj = c(0.5, 0.5),
+      cex = 0.8
+    )
+  }
+})
+```
+
+### Open data on university location and geocode uni addresses
+
+-   Source: USTAT
+
+```{r}
+
+uni <- read.csv(here("data", "raw", "atenei.csv"))
+
+uni$stat <- str_squish(uni$Statale.NonStataleLibera)
+
+uni_publ <- uni %>%
+  filter(stat == "Statale")
+
+
+uni_publ$regione <- str_to_title(tolower(uni_publ$REGIONE))
+
+uni_publ$regione <- ifelse(uni_publ$region == "Emilia Romagna", "Emilia-Romagna", uni_publ$regione)
+
+
+#uni_dest <- uni_publ %>%
+ #filter(regione %in% top5_dest)
+
+
+
+#table(unique(uni_publ$regione))
+
+
+uni_dest <- uni_publ %>%
+  filter(COD_Ateneo != 4803)
+
+
+uni_dest <- uni_dest %>%
+  dplyr::select(regione,PROVINCIA, NomeOperativo, Tipologia_ateneo_descrizione, Classe.dimensione, Indirizzo)
+
+
+#####################
+
+uni_dest$prov <- str_to_title(tolower(uni_dest$PROVINCIA))
+
+unis <- uni_dest %>% 
+  mutate(full_address = paste(Indirizzo, prov, regione, "Italy", sep = ", "))
+
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Pavia IUSS", "P.zza della Vittoria, Pavia, Lombardia, Italy",unis$full_address)
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Roma Tor Vergata", "Via Orazio Raimondo,18, Roma, Lazio, Italy",unis$full_address)
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Cassino", "Viale dell'Università, 03043 Cassino FR",unis$full_address)
+
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Firenze - Istituto Italiano di Scienze Umane", "Palazzo Strozzi, Firenze, Toscana, Italy",unis$full_address)
+
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Ferrara", "Via Ariosto 35, Ferrara, Emilia-Romagna, Italy",unis$full_address)
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Parma", 
+"Strada dell'Università, 12, Parma, Emilia-Romagna, Italy",unis$full_address)
+
+
+unis$full_address <- ifelse(unis$NomeOperativo == "Sannio", "Piazza Guerrazzi, 1, 82100 Benevento BN, Italia", unis$full_address)
+
+
+#################
+
+#opencage token 20f036ce8b7748bfa7b517f72c463c72
+
+#####
+
+
+library(stringr)
+
+unis <- unis %>%
+  mutate(
+    # remove building abbreviations like "Pal. Giuliari"
+    full_address_clean = full_address %>%
+      str_remove_all("\\bPal\\.\\s*[^,]+") %>%
+      str_remove_all("Campus\\s+Universitario") %>%
+      str_remove_all("Ca'\\s*[^,]+") %>%
+      str_squish() %>%
+      # ensure clean commas
+      str_replace_all(",\\s*,", ", ")
+  )
+
+
+
+##using open street maps 
+
+unis <- unis %>% 
+  geocode(full_address_clean, method = "osm", lat = latitude, long = longitude)
+
+
+#miss_uni <- unis%>%
+  #filter(is.na(latitude))%>%
+  #dplyr::select(full_address)
+
+
+
+unis_sf <- st_as_sf(unis, coords = c("longitude", "latitude"), crs = 4326)
+
+
+italy_provinces <- ne_states(country = "Italy", returnclass = "sf")
+
+#ita_good <- italy_provinces %>%
+ # filter(region %in% top5_dest)
+
+map_plot <- ggplot() +
+  geom_sf(data = italy_provinces, fill = NA, color = "grey50") +
+  geom_sf(data = italy_provinces, fill = "lightyellow", color = "black") +
+  geom_sf(data = unis_sf, aes(color = Tipologia_ateneo_descrizione), size = 1, show.legend = TRUE) +
+  labs(title = "University Locations by Region",
+       subtitle = "Geocoded addresses over provincial boundaries",
+       color = "University Type") +
+  theme_minimal()
+
+
+print(map_plot)
+
+#ggsave(here("output","universities_by_region.pdf"), map_plot, width = 10, height = 8, dpi = 300)
+
+
+
+
+```
