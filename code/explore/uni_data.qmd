@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-### University data to give overview 
+### University data to give overview
 
 ```{r}
 
@@ -123,6 +123,8 @@ province_imm_changes <- fuori_sede_lg %>%
 
 print(province_imm_changes)
 
+saveRDS(province_imm_changes, here("data","tmp","flow_16.RDS"))
+
 italy_map_joined <- italy_map_j %>%
   left_join(province_imm_changes, by = c("name" = "prov_diploma"))
 
@@ -180,8 +182,7 @@ ggplot(italy_map_joined) +
   geom_sf(aes(fill = perc_leavers), color = "white") +
   scale_fill_viridis_c(option = "plasma", name = "Percentage\nLeavers", na.value = "grey90") +
   labs(
-    title = "Percentage of Imm Students Leaving their Region (2016/2017)",
-    subtitle = "Calculated as percentage of Imm students leaving their diploma region"
+    title = "% of Highschoolers Leaving their Province (2016/2017) to study"
   ) +
   theme_minimal() +
   theme(
@@ -190,41 +191,52 @@ ggplot(italy_map_joined) +
   )
 
 
-library(viridis)
-library(ggspatial)
 
-ggplot(italy_map_joined) +
 
-  geom_sf(aes(fill = perc_leavers), color = "gray80", size = 0.2) +
-  
-  scale_fill_viridis_c(
-    option    = "plasma",
-    direction = -1,
-    name      = "Leavers\n(%)",
-    labels    = scales::percent_format(accuracy = 1)
-  ) +
-  labs(
-    title    = "Students Leaving Their Diploma Region to go to University",
-    subtitle = "A.Y. 2016/17 — % of students studying outside their home region",
-    caption  = "Source: USTAT"
-  ) +
-  annotation_scale(
-    location   = "bl", 
-    width_hint = 0.2, 
-    style      = "bar"
-  ) +
-  theme_void() +
-  theme(
-    plot.title    = element_text(size = 18, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 10)),
-    plot.caption  = element_text(size = 8, hjust = 1, margin = margin(t = 10)),
-  
-    legend.background = element_rect(fill = "white", color = NA, size = 0.2),
-    legend.key        = element_rect(fill = "white", color = NA),
-    legend.title      = element_text(size = 10, face = "bold"),
-    legend.text       = element_text(size = 9)
+
+library(RColorBrewer)  # for a clean Brewer palette
+
+# 1) bin into sensible percent‐point categories
+italy_map_binned <- italy_map_joined %>%
+  mutate(
+    pct_cat = cut(
+      perc_leavers,
+      breaks = c(5, 15, 25, 35, 45, Inf),
+      labels = c("5 %", "5-15%", "15–25%", "25–35%", "> 45%"),
+      right  = FALSE
+    )
   )
 
+# 2) plot with a discrete fill scale and simple vertical legend
+leaver <- ggplot(italy_map_binned) +
+  geom_sf(aes(fill = pct_cat), color = "grey80", size = 0.2) +
+  scale_fill_brewer(
+    palette = "YlGnBu",
+    na.value = "grey95",
+    name     = "% Leavers",
+    drop     = FALSE
+  ) +
+  labs(
+    title    = "High-Schoolers Leaving Their Home Province",
+    subtitle = "Academic Year 2016–17",
+    caption  = "Source: USTAT"
+  ) +
+  coord_sf(expand = FALSE) +
+  theme_void(base_size = 12) +
+  theme(
+    legend.position     = "right",
+    legend.title        = element_text(face = "bold"),
+    legend.text         = element_text(size = 9),
+    legend.key.height   = unit(1, "cm"),
+    legend.key.width    = unit(0.4, "cm"),
+    plot.title          = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle       = element_text(size = 12, hjust = 0.5),
+    plot.caption        = element_text(size = 8, color = "grey50", hjust = 1)
+  )
+
+leaver
+
+ggsave(here("output","leavers.pdf"), leaver)
 
 ```
 

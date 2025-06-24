@@ -140,15 +140,24 @@ balance
 ggsave(here("output","balance.pdf"), balance)
 ```
 
-### Extract matched sample and run reg with it 
+### Extract matched sample and run reg with it
 
 ```{r}
 
 matched_ps <- match.data(m_ps)
 
-m0 <- lm(hh_univ ~ owner_any, data = matched_ps)
+m0 <- lm(hh_univ ~ own_house, data = matched_ps)
 coeftest(m0, vcov = vcovHC(m0, "HC1"))
 
+
+m_fix <- feols(
+  hh_univ ~ own_house
+   | year:ireg,               # fixed‐effects : year and region
+  cluster = ~ nquest,          # cluster SEs by region
+  data    = matched_ps
+)
+
+summary(m_fix)
 
 
 ```
@@ -159,30 +168,130 @@ coeftest(m0, vcov = vcovHC(m0, "HC1"))
 
 
 
-matched_ps <- matched_ps %>% mutate(ses_q = ntile(PC1, 5))
+
+matched_ps <- matched_ps %>%
+  mutate(
+    ses_q = ntile(hh_income_net, 5),
+    ses_q = factor(ses_q,
+                   levels = 1:5,
+                   labels = paste0("Q",1:5))
+  )
+
+
 
 quint_ps <- matched_ps %>%
   group_by(ses_q) %>%
-  do(tidy(
-    lm(hh_univ ~ owner_any + PC2 + father_studio + studio + y + valabit + fin_net_assets + factor(ireg),
-       data = .),
-    conf.int = TRUE
-  )) %>% 
-  filter(term == "owner_any") %>%
-  mutate(
-    ses_q = factor(ses_q, labels = paste0("Q",1:5))
+  do(
+    tidy(
+      feols(
+  hh_univ ~ own_house
+   | year:ireg,               # fixed‐effects : year and region
+  cluster = ~ nquest,          # cluster SEs by region
+  data    = .
+),
+      conf.int = TRUE
+    )
+  ) %>%
+  ungroup() %>%
+  filter(term == "own_house")
+
+
+counts_q <- matched_ps %>%
+  count(ses_q, name = "n_obs")
+
+quint_plot <- quint_ps %>%
+  left_join(counts_q, by = "ses_q")
+
+
+quint_match <- ggplot(quint_plot, aes(x = ses_q, y = estimate)) +
+  # zero‐line underneath everything
+  geom_hline(yintercept = 0,
+             color = "firebrick", linetype = "dashed", size = 0.8) +
+  
+  # CIs and points
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2, color = "#2C3E50") +
+  geom_point(size = 3, color = "#E74C3C") +
+  geom_text(aes(label = percent(estimate, accuracy = 1)),
+            vjust = -0.6, size = 3, color = "#2C3E50") +
+  
+  # n_obs labels just above each CI
+  geom_text(aes(y = conf.high + 0.02, label = paste0("n=",n_obs)),
+            size = 3, color = "gray40") +
+  
+  # expand the axis so we see zero and all annotations
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0.1, 0.2))  # 10% below, 20% above
+  ) +
+  
+  labs(
+    x        = "Income Quintile",
+    y        = "ATT on University Presence",
+    title    = "Effect of Home Ownership on University Enroll by Income Quintile",
+    subtitle = "Coefficient for home ownership with 95% CI"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle    = element_text(size = 10, hjust = 0.5, margin = margin(b = 8)),
+    axis.title       = element_text(face = "bold"),
+    axis.text.x      = element_text(face = "bold"),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
   )
 
-ggplot(quint_ps, aes(x = ses_q, y = estimate)) +
-  geom_hline(yintercept = 0, linetype="dashed", color="grey50") +
-  geom_pointrange(aes(ymin=conf.low, ymax=conf.high),
-                  position = position_dodge(width=0.5),
-                  fatten = 1.2) +
-  scale_y_continuous("Effect of Ownership on Pr(hh_univ)",
-                     labels = percent_format(1)) +
-  labs(
-    title    = "Ownership Effect by PC1 Quintile (Matched Sample)",
-    subtitle = "Coefficients ±95% CI"
-  ) +
-  theme_minimal()
+
+quint_match
+ggsave(here("output","matched_quint_reg.pdf"), quint_match)
+```
+
+### Now add as a control the mobility 
+
+```{r}
+province_imm_changes <- readRDS(here("data","tmp","flow_16.RDS"))
+
+panel_univ <- panel_univ %>%
+  mutate(
+    region_diploma = dplyr::recode(
+      ireg,
+      `1`  = "Piemonte",
+      `2`  = "Valle d'Aosta",
+      `3`  = "Lombardia",
+      `4`  = "Trentino",
+      `5`  = "Veneto",
+      `6`  = "Friuli",
+      `7`  = "Liguria",
+      `8`  = "Emilia Romagna",
+      `9`  = "Toscana",
+      `10` = "Umbria",
+      `11` = "Marche",
+      `12` = "Lazio",
+      `13` = "Abruzzo",
+      `14` = "Molise",
+      `15` = "Campania",
+      `16` = "Puglia",
+      `17` = "Basilicata",
+      `18` = "Calabria",
+      `19` = "Sicilia",
+      `20` = "Sardegna",
+      .default = NA_character_
+    )
+  )
+
+
+region_imm_changes <- province_imm_changes %>%
+  group_by(region_diploma) %>%
+  summarize(
+    mean(all) beside province name
+  )
+  
+
+panel_unive <- panel_univ %>%
+  merge(province_imm_changes, by =c("region_diploma"), all.y = TRUE)
+
+
+
+
 ```
