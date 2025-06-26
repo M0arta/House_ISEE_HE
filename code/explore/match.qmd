@@ -93,6 +93,74 @@ m_ps <- matchit(
 )
 
 
+
+m_sum <- summary(m_ps)
+
+# 3) extract the sample‐size matrix
+#    rows = All / Matched / Unmatched / Discarded
+#    cols = Control / Treated
+ns <- as.data.frame(m_sum$nn) %>%
+  tibble::rownames_to_column("Sample") %>%
+  rename(Control = Control, Treated = Treated)
+
+# 4) render a LaTeX kable
+ff <- kable(
+  ns,
+  format    = "latex",
+  booktabs  = TRUE,
+  caption   = "MatchIt Sample Sizes (Owner = treated)",
+  align     = c("l", "r", "r"),
+  col.names = c("", "Control", "Treated")
+)
+
+cat(ff)
+
+df_ps <- df0 %>%
+  dplyr::select(pscore, owner_any) %>%
+  mutate(
+    group = if_else(owner_any==1, "Treated", "Control")
+  )
+
+range_t <- range(df_ps$pscore[df_ps$group=="Treated"])
+range_c <- range(df_ps$pscore[df_ps$group=="Control"])
+lower  <- max(range_t[1], range_c[1])
+upper  <- min(range_t[2], range_c[2])
+
+
+common <- ggplot(df_ps, aes(x = pscore, fill = group)) +
+  geom_density(alpha = 0.5) +
+  # vertical lines at the overlap limits
+  geom_vline(xintercept = c(lower, upper),
+             linetype = "dashed",
+             color    = "black") +
+  scale_fill_manual(values = c("Control" = "#1b9e77",
+                               "Treated" = "#d95f02")) +
+  labs(
+    title = "Propensity Score Distributions and Common Support",
+    x     = "Propensity Score",
+    fill  = "Group"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = c(0.8, 0.8),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave(here("output","commonsupport.pdf"),common)
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```
 
 ### Covariate balance after matching
@@ -159,6 +227,67 @@ m_fix <- feols(
 
 summary(m_fix)
 
+
+
+matched_data <- match.data(m_ps)
+
+mod0 <- feglm(
+  hh_univ ~ owner_any,
+  data    = matched_data,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+mod1 <- feglm(
+  hh_univ ~ owner_any | year:ireg,
+  data    = matched_data,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+mod2 <- feglm(
+  hh_univ ~ owner_any + father_studio + studio + y + valabit + fin_net_assets
+           | year:ireg,
+  data    = matched_data,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+etable(mod2)
+
+
+tab <- etable(
+  mod0, mod1, mod2,
+  keep         = "owner_any",
+  dict         = c(owner_any = "Owner Dummy"),
+  se           = "cluster",
+  cluster      = "nquest",
+  tex          = TRUE,
+  style.tex    = "booktabs",
+  colnames     = c("No FE", "FE only", "FE + Controls"),
+  fitstat      = c("nobs", "r2.pse"),
+  dict.gof     = c(nobs = "Obs.", r2.pse = "Pseudo $R^2$")
+)
+
+# 4) wrap in a table environment and print
+cat(
+  "\\begin{table}[!ht]\n",
+  "\\centering\n",
+  "\\scriptsize\n",  
+  "\\caption{Matched‐Sample Logit of University Enrollment}\n",
+  tab, "\n",
+  "\\end{table}\n"
+)
+
+
+
+
+
+
+
+etable(mod0)
+etable(mod1)
+etable(mod2)
 
 ```
 
@@ -245,6 +374,46 @@ quint_match <- ggplot(quint_plot, aes(x = ses_q, y = estimate)) +
 
 quint_match
 ggsave(here("output","matched_quint_reg.pdf"), quint_match)
+
+
+
+results_table <- quint_ps %>%
+  dplyr::select(ses_q, estimate, std.error, conf.low, conf.high) %>%
+  mutate(
+    across(c(estimate, std.error, conf.low, conf.high), ~ round(.x, 4))
+  )
+
+print(results_table)
+
+ dd <- kable(results_table, format = "latex", booktabs = TRUE, 
+      caption = "Matched Quintile Regressions of University Enrollment")
+
+cat(dd)
+
+
+
+quintile_results <- matched_ps %>%
+  group_by(ses_q) %>%
+  group_modify(~{
+    mod <- feols(hh_univ ~ own_house | year + ireg, cluster = ~ nquest, data = .x)
+    tidy_res <- tidy(mod, conf.int = TRUE) %>% filter(term == "own_house")
+    tidy_res$nobs <- mod$nobs
+    tidy_res$r_squared <- fixest::r2(mod)["r2"]  # extract scalar
+    tidy_res
+  }) %>%
+  ungroup() %>%
+  select(ses_q, estimate, std.error, conf.low, conf.high, nobs, r_squared) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+
+qe <- kable(
+  quintile_results,
+  format = "latex",
+  booktabs = TRUE,
+  col.names = c("SES Quintile", "Estimate", "Std. Error", "Conf. Low", "Conf. High", "Obs.", "R²"),
+  caption = "Matched Quintile Regressions of University Enrollment"
+) %>% cat()
+
 ```
 
 ### Now add as a control the mobility 
@@ -293,5 +462,234 @@ panel_unive <- panel_univ %>%
 
 
 
+
+
+library(tidyverse)
+
+# 1. Basic dimensions
+gg <- panel_univ %>% 
+  summarise(
+    total_rows      = n(),
+    n_hh            = n_distinct(nquest),
+    n_panel_inds    = n_distinct(nordp, na.rm = TRUE)
+  )
+# → total_rows should be ~46 000, n_hh ~2 000, etc.
+
+# 2. Per‐wave breakdown
+rr <-panel_univ %>% 
+  group_by(year) %>% 
+  summarise(
+    rows         = n(),
+    hh           = n_distinct(nquest),
+    panel_inds   = n_distinct(nordp, na.rm = TRUE)
+  )
+
+# 3. Individuals per household per wave
+#    (i.e. average household size in your sample each wave)
+uz <-panel_univ %>% 
+  count(year, nquest) %>% 
+  group_by(year) %>% 
+  summarise(
+    mean_size = mean(n),
+    min_size  = min(n),
+    max_size  = max(n)
+  )
+
+# 4. How many waves each household appears in?
+oo <- panel_univ %>% 
+  distinct(nquest, year) %>% 
+  count(nquest) %>% 
+  rename(n_waves = n) %>% 
+  count(n_waves) %>% 
+  mutate(pct = n / sum(n) * 100)
+
+
+
+
+
+gg
+rr
+oo
+uz
+
+```
+
+### Entropy balancing 
+
+```{r}
+
+library(dplyr)
+library(WeightIt)
+library(cobalt)
+
+# 1. Define treatment and covariates, filter complete cases
+panel_univ <- panel_univ %>% 
+  mutate(owner_any = as.integer(houseown1==1 | houseown2==1))
+
+match_vars <- c("owner_any","father_studio","studio","y",
+                "valabit","fin_net_assets","ireg")
+
+
+df0 <- panel_univ %>%
+  mutate(owner_any = as.integer(houseown1==1 | houseown2==1)) %>%
+  filter(complete.cases(father_studio, studio, y,
+                        valabit, fin_net_assets, hh_univ))
+
+# 1a) Entropy‐balance on just the key continuous SES covariates
+w_ebal1 <- weightit(
+  owner_any ~ father_studio + studio + y + valabit + fin_net_assets,
+  data   = df0,
+  method = "ebal"
+)
+
+# attach weights & check balance
+df0$w_ebal1 <- weights(w_ebal1)
+bal1 <- bal.tab(w_ebal1, un = TRUE, m.threshold = .1)
+
+
+plotl <- love.plot(bal1, stats="mean.diffs", threshold=.1, abs=TRUE)
+                # standardized mean diffs
+
+plotl
+
+ggsave(here("output","entropy_covbal.pdf"), plotl)
+
+
+
+
+```
+
+## Entropy reg
+
+```{r}
+m0_w <- lm(hh_univ ~ owner_any,
+           data    = df0,
+           weights = w_ebal1)
+coeftest(m0_w, vcov = vcovHC(m0_w, type = "HC1"))
+
+# 1b) FE‐OLS
+m_fix_w <- feols(
+  hh_univ ~ owner_any
+   | year:ireg,               # year×region FEs
+  weights = ~w_ebal1,         # entropy‐balancing weight
+  cluster = ~nquest,          # cluster SEs
+  data    = df0
+)
+summary(m_fix_w)
+
+# 1c) Weighted logistic (feglm)
+mod0_w <- feglm(
+  hh_univ ~ owner_any,
+  data    = df0,
+  weights = ~w_ebal1,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+mod1_w <- feglm(
+  hh_univ ~ owner_any | year:ireg,
+  data    = df0,
+  weights = ~w_ebal1,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+mod2_w <- feglm(
+  hh_univ ~ owner_any + father_studio + studio + y + valabit + fin_net_assets
+           | year:ireg,
+  data    = df0,
+  weights = ~w_ebal1,
+  family  = binomial("logit"),
+  cluster = ~nquest
+)
+
+etable(mod0_w)
+etable(mod1_w)
+etable(mod2_w)
+
+
+
+```
+
+### Entropy Quintile reg 
+
+```{r}
+
+
+df0_q <- df0 %>%
+  mutate(
+    ses_q = ntile(hh_income_net, 5),
+    ses_q = factor(ses_q,
+                   levels = 1:5,
+                   labels = paste0("Q",1:5))
+  )
+
+quint_ebal <- df0_q %>%
+  group_by(ses_q) %>%
+  group_modify(~{
+    mod <- feols(
+      hh_univ ~ owner_any | year:ireg,
+      data    = .x,
+      weights = ~w_ebal1,
+      cluster = ~nquest
+    )
+    tidy(mod, conf.int = TRUE) %>%
+      filter(term == "owner_any") %>%
+      mutate(
+        n_obs     = mod$nobs,
+        r_squared = fixest::r2(mod)["r2"]
+      )
+  }) %>%
+  ungroup()
+
+#––– 3) Plot the quintile effects
+quint_plot_ebal <- quint_ebal %>%
+  ggplot(aes(x = ses_q, y = estimate)) +
+  geom_hline(yintercept = 0,
+             color = "firebrick", linetype = "dashed", size = 0.8) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2) +
+  geom_point(size = 3) +
+  geom_text(aes(label = percent(estimate, accuracy = 1)),
+            vjust = -0.6, size = 3) +
+  geom_text(aes(y = conf.high + 0.02, label = paste0("n=",n_obs)),
+            size = 3, color = "gray40") +
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0.1, 0.2))
+  ) +
+  labs(
+    x        = "Income Quintile",
+    y        = "ATT on University Presence",
+    title    = "Effect of Home Ownership by Income Quintile\n(Entropy Balanced Weights)",
+    subtitle = "Coefficient for owner_any with 95% CI"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle    = element_text(size = 10, hjust = 0.5, margin = margin(b = 8)),
+    axis.title       = element_text(face = "bold"),
+    axis.text.x      = element_text(face = "bold"),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
+  )
+
+print(quint_plot_ebal)
+ggsave(here("output","ebal_quint_reg.pdf"), quint_plot_ebal)
+
+#––– 4) LaTeX table of quintile results
+results_table <- quint_ebal %>%
+  dplyr::select(ses_q, estimate, std.error, conf.low, conf.high, n_obs, r_squared) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+kable(
+  results_table,
+  format    = "latex",
+  booktabs  = TRUE,
+  caption   = "Entropy - Balanced Quintile Regressions of University Enrollment",
+  col.names = c("SES Quintile", "Estimate", "Std. Error", "Conf. Low", "Conf. High", "Obs.", "R$^2$")
+) %>%
+  cat()
 
 ```
